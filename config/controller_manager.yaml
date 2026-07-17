@@ -1,0 +1,3 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 50  # Hz -- matches rp1_dronecan_bridge's command_rate_hz default

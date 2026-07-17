@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<robot name="rp1_steering">
+  <!-- Minimal skeleton -- just enough links/joints for ros2_control to load the two currently
+       bench-wired steering actuators (see docs/can_id_map.md's +4 steering-index convention:
+       front-right drive=1 -> steering=5, rear-left drive=2 -> steering=6). Not a real physical
+       description of the robot; rp1 has no full URDF yet. -->
+  <link name="base_link"/>
+
+  <link name="steering_front_right_link"/>
+  <joint name="steering_front_right" type="continuous">
+    <parent link="base_link"/>
+    <child link="steering_front_right_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <link name="steering_rear_left_link"/>
+  <joint name="steering_rear_left" type="continuous">
+    <parent link="base_link"/>
+    <child link="steering_rear_left_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <ros2_control name="rp1_steering" type="system">
+    <hardware>
+      <plugin>rp1_hardware_interface/SteeringHardware</plugin>
+      <param name="can_iface">can0</param>
+      <param name="node_id">44</param>
+    </hardware>
+    <joint name="steering_front_right">
+      <param name="actuator_id">5</param>
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="steering_rear_left">
+      <param name="actuator_id">6</param>
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+</robot>

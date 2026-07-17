@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rp1_hardware_interface</name>
+  <version>0.0.1</version>
+  <description>
+    ros2_control SystemInterface for rp1's steering actuators. Talks
+    uavcan.equipment.actuator.{ArrayCommand,Status} directly over SocketCAN using a vendored
+    copy of the same libcanard codec the VESC firmware uses, bridging the gap between
+    ros2_control position commands and the DroneCAN transport (see docs/can_id_map.md).
+  </description>
+  <maintainer email="uzi.mor@gmail.com">uzi.mor</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <hardware_interface plugin="${prefix}/rp1_hardware_interface.xml"/>
+  </export>
+</package>

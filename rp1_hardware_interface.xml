@@ -1,0 +1,11 @@
+<library path="rp1_hardware_interface">
+  <class name="rp1_hardware_interface/SteeringHardware"
+         type="rp1_hardware_interface::SteeringHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Talks uavcan.equipment.actuator.ArrayCommand/Status directly over SocketCAN for rp1's
+      steering actuators. Each joint must declare an "actuator_id" parameter matching the
+      DroneCAN uavcan_esc_index configured on that VESC (see docs/can_id_map.md).
+    </description>
+  </class>
+</library>
