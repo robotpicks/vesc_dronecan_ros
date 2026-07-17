@@ -1,3 +1,16 @@
 controller_manager:
   ros__parameters:
     update_rate: 50  # Hz -- matches rp1_dronecan_bridge's command_rate_hz default
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    steering_position_controller:
+      type: position_controllers/JointGroupPositionController
+
+steering_position_controller:
+  ros__parameters:
+    joints:
+      - steering_front_right
+      - steering_rear_left
+    interface_name: position
