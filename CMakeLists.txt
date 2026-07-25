@@ -36,11 +36,14 @@ target_include_directories(rp1_hardware_interface PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(rp1_hardware_interface PRIVATE rp1_canard)
-ament_target_dependencies(rp1_hardware_interface PUBLIC
-  hardware_interface
-  pluginlib
-  rclcpp
-  rclcpp_lifecycle
+# Modern namespaced imported targets rather than ament_target_dependencies(): that macro is gone
+# in current ament_cmake (no longer shipped by ament_cmake_target_dependencies), and the
+# ::-targets carry their own include dirs, so this is the portable spelling.
+target_link_libraries(rp1_hardware_interface PUBLIC
+  hardware_interface::hardware_interface
+  pluginlib::pluginlib
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
 )
 
 pluginlib_export_plugin_description_file(hardware_interface rp1_hardware_interface.xml)

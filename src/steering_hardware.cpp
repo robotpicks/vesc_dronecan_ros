@@ -30,18 +30,18 @@ rclcpp::Logger logger() { return rclcpp::get_logger("rp1_hardware_interface"); }
 }  // namespace
 
 hardware_interface::CallbackReturn SteeringHardware::on_init(
-  const hardware_interface::HardwareInfo & info)
+  const hardware_interface::HardwareComponentInterfaceParams & params)
 {
   // Base on_init() parses the URDF-declared state/command interfaces (position/velocity per
-  // joint) -- it's the deprecated-but-still-the-default overload, matching how this override
-  // itself is invoked; suppressed the same way the framework suppresses its own internal call.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-  auto base_result = hardware_interface::SystemInterface::on_init(info);
-#pragma GCC diagnostic pop
+  // joint). Current ros2_control passes a HardwareComponentInterfaceParams (HardwareInfo plus a
+  // weak_ptr to the controller manager's executor); the old HardwareInfo-only overload is gone,
+  // so the URDF data is reached through params.hardware_info.
+  auto base_result = hardware_interface::SystemInterface::on_init(params);
   if (base_result != hardware_interface::CallbackReturn::SUCCESS) {
     return base_result;
   }
+
+  const auto & info = params.hardware_info;
 
   auto iface_it = info.hardware_parameters.find("can_iface");
   if (iface_it != info.hardware_parameters.end()) {
