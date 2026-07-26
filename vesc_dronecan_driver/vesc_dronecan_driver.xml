@@ -1,0 +1,17 @@
+<library path="vesc_dronecan_driver">
+  <class name="vesc_dronecan_driver/VescDroneCanSystem"
+         type="vesc_dronecan_driver::VescDroneCanSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Speaks DroneCAN directly over SocketCAN to VESC motor controllers, any mix of driven and
+      steered joints on one bus and one node ID. A joint declaring "esc_index" is a drive wheel:
+      velocity command via uavcan.equipment.esc.RPMCommand, feedback from esc.Status. A joint
+      declaring "actuator_id" is a steering actuator: position command via
+      uavcan.equipment.actuator.ArrayCommand, feedback from actuator.Status. Both id values are
+      the uavcan_esc_index configured on that VESC in VESC Tool. Per-ESC
+      voltage/current/temperature is exported through &lt;gpio&gt; state interfaces keyed by the
+      same esc_index. Steering needs firmware with actuator.ArrayCommand support, which upstream
+      VESC firmware does not have -- see the package README.
+    </description>
+  </class>
+</library>

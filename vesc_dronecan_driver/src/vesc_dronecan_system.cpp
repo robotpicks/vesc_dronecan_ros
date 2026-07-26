@@ -1,4 +1,4 @@
-#include "rp1_hardware_interface/rp1_hardware.hpp"
+#include "vesc_dronecan_driver/vesc_dronecan_system.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -24,12 +24,12 @@ extern "C" {
 #include "uavcan/equipment/esc/Status.h"
 }
 
-namespace rp1_hardware_interface
+namespace vesc_dronecan_driver
 {
 
 namespace
 {
-rclcpp::Logger logger() { return rclcpp::get_logger("rp1_hardware_interface"); }
+rclcpp::Logger logger() { return rclcpp::get_logger("vesc_dronecan_driver"); }
 
 constexpr double kRadPerSecToRpm = 60.0 / (2.0 * M_PI);
 constexpr double kRpmToRadPerSec = (2.0 * M_PI) / 60.0;
@@ -48,7 +48,7 @@ double parseDouble(const std::string & text, double fallback)
 }
 }  // namespace
 
-hardware_interface::CallbackReturn Rp1Hardware::on_init(
+hardware_interface::CallbackReturn VescDroneCanSystem::on_init(
   const hardware_interface::HardwareComponentInterfaceParams & params)
 {
   // Base on_init() parses the URDF-declared state/command interfaces. Current ros2_control passes
@@ -136,13 +136,13 @@ hardware_interface::CallbackReturn Rp1Hardware::on_init(
   canard_memory_pool_.resize(4096);
 
   RCLCPP_INFO(
-    logger(), "rp1_hardware_interface configured: %zu drive, %zu steering, %zu ESC telemetry",
+    logger(), "vesc_dronecan_driver configured: %zu drive, %zu steering, %zu ESC telemetry",
     drive_joints_.size(), steering_joints_.size(), esc_telemetry_.size());
 
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::CallbackReturn Rp1Hardware::on_activate(
+hardware_interface::CallbackReturn VescDroneCanSystem::on_activate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
   canardInit(
@@ -183,7 +183,7 @@ hardware_interface::CallbackReturn Rp1Hardware::on_activate(
 
   RCLCPP_INFO(
     logger(),
-    "rp1_hardware_interface up on %s (node_id=%d, %zu drive + %zu steering joint(s), "
+    "vesc_dronecan_driver up on %s (node_id=%d, %zu drive + %zu steering joint(s), "
     "gear_ratio=%.4f, pole_pairs=%.1f, command_rpm_is_erpm=%s)",
     can_iface_.c_str(), local_node_id_, drive_joints_.size(), steering_joints_.size(), gear_ratio_,
     motor_pole_pairs_, command_rpm_is_erpm_ ? "true" : "false");
@@ -191,7 +191,7 @@ hardware_interface::CallbackReturn Rp1Hardware::on_activate(
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::CallbackReturn Rp1Hardware::on_deactivate(
+hardware_interface::CallbackReturn VescDroneCanSystem::on_deactivate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
   if (socket_fd_ >= 0) {
@@ -201,7 +201,7 @@ hardware_interface::CallbackReturn Rp1Hardware::on_deactivate(
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-double Rp1Hardware::wheelRadPerSecToCommandRpm(double rad_per_sec) const
+double VescDroneCanSystem::wheelRadPerSecToCommandRpm(double rad_per_sec) const
 {
   // wheel rad/s -> wheel RPM -> motor RPM, then (because the firmware feeds RPMCommand straight
   // into mc_interface_set_pid_speed without a pole-pair conversion) motor RPM -> ERPM.
@@ -212,14 +212,14 @@ double Rp1Hardware::wheelRadPerSecToCommandRpm(double rad_per_sec) const
   return rpm;
 }
 
-double Rp1Hardware::statusRpmToWheelRadPerSec(double status_rpm) const
+double VescDroneCanSystem::statusRpmToWheelRadPerSec(double status_rpm) const
 {
   // esc.Status.rpm is already mechanical motor RPM -- sendEscStatus() divides ERPM by pole pairs
   // before transmitting -- so only the gearing has to come back out here.
   return (status_rpm / gear_ratio_) * kRpmToRadPerSec;
 }
 
-void Rp1Hardware::pumpRx()
+void VescDroneCanSystem::pumpRx()
 {
   for (;;) {
     struct can_frame raw_frame{};
@@ -242,7 +242,7 @@ void Rp1Hardware::pumpRx()
   }
 }
 
-void Rp1Hardware::pumpTxQueue()
+void VescDroneCanSystem::pumpTxQueue()
 {
   for (const CanardCANFrame * txf = canardPeekTxQueue(&canard_ins_); txf != nullptr;
        txf = canardPeekTxQueue(&canard_ins_)) {
@@ -261,7 +261,7 @@ void Rp1Hardware::pumpTxQueue()
   }
 }
 
-hardware_interface::return_type Rp1Hardware::read(
+hardware_interface::return_type VescDroneCanSystem::read(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
 {
   pumpRx();
@@ -291,7 +291,7 @@ hardware_interface::return_type Rp1Hardware::read(
   return hardware_interface::return_type::OK;
 }
 
-void Rp1Hardware::broadcastRpmCommand()
+void VescDroneCanSystem::broadcastRpmCommand()
 {
   // RPMCommand is a broadcast array indexed by esc_index: every VESC on the bus receives the same
   // message and picks out its own slot, so the array has to be long enough to reach the highest
@@ -325,7 +325,7 @@ void Rp1Hardware::broadcastRpmCommand()
     &transfer_id, CANARD_TRANSFER_PRIORITY_HIGH, buf, static_cast<uint16_t>(nbytes), false);
 }
 
-void Rp1Hardware::broadcastActuatorCommand()
+void VescDroneCanSystem::broadcastActuatorCommand()
 {
   std::vector<uavcan_equipment_actuator_Command> commands;
   commands.reserve(steering_joints_.size());
@@ -352,7 +352,7 @@ void Rp1Hardware::broadcastActuatorCommand()
     static_cast<uint16_t>(nbytes), false);
 }
 
-hardware_interface::return_type Rp1Hardware::write(
+hardware_interface::return_type VescDroneCanSystem::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
   if (!drive_joints_.empty()) {
@@ -367,7 +367,7 @@ hardware_interface::return_type Rp1Hardware::write(
   return hardware_interface::return_type::OK;
 }
 
-void Rp1Hardware::handleEscStatus(CanardRxTransfer * transfer)
+void VescDroneCanSystem::handleEscStatus(CanardRxTransfer * transfer)
 {
   uavcan_equipment_esc_Status status{};
   if (uavcan_equipment_esc_Status_decode(transfer, transfer->payload_len, &status, nullptr) < 0) {
@@ -391,7 +391,7 @@ void Rp1Hardware::handleEscStatus(CanardRxTransfer * transfer)
   }
 }
 
-void Rp1Hardware::handleActuatorStatus(CanardRxTransfer * transfer)
+void VescDroneCanSystem::handleActuatorStatus(CanardRxTransfer * transfer)
 {
   uavcan_equipment_actuator_Status status{};
   if (uavcan_equipment_actuator_Status_decode(transfer, transfer->payload_len, &status, nullptr) < 0) {
@@ -407,9 +407,9 @@ void Rp1Hardware::handleActuatorStatus(CanardRxTransfer * transfer)
   }
 }
 
-void Rp1Hardware::onTransferReceived(CanardInstance * ins, CanardRxTransfer * transfer)
+void VescDroneCanSystem::onTransferReceived(CanardInstance * ins, CanardRxTransfer * transfer)
 {
-  auto * self = static_cast<Rp1Hardware *>(canardGetUserReference(ins));
+  auto * self = static_cast<VescDroneCanSystem *>(canardGetUserReference(ins));
   if (self == nullptr) {
     return;
   }
@@ -426,7 +426,7 @@ void Rp1Hardware::onTransferReceived(CanardInstance * ins, CanardRxTransfer * tr
   }
 }
 
-bool Rp1Hardware::shouldAcceptTransfer(
+bool VescDroneCanSystem::shouldAcceptTransfer(
   const CanardInstance * /*ins*/, uint64_t * out_data_type_signature, uint16_t data_type_id,
   CanardTransferType /*transfer_type*/, uint8_t /*source_node_id*/)
 {
@@ -442,8 +442,8 @@ bool Rp1Hardware::shouldAcceptTransfer(
   }
 }
 
-}  // namespace rp1_hardware_interface
+}  // namespace vesc_dronecan_driver
 
 #include "pluginlib/class_list_macros.hpp"
 
-PLUGINLIB_EXPORT_CLASS(rp1_hardware_interface::Rp1Hardware, hardware_interface::SystemInterface)
+PLUGINLIB_EXPORT_CLASS(vesc_dronecan_driver::VescDroneCanSystem, hardware_interface::SystemInterface)

@@ -1,13 +1,14 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>rp1_hardware_interface</name>
+  <name>vesc_dronecan_driver</name>
   <version>0.0.1</version>
   <description>
-    ros2_control SystemInterface for rp1's steering actuators. Talks
-    uavcan.equipment.actuator.{ArrayCommand,Status} directly over SocketCAN using a vendored
-    copy of the same libcanard codec the VESC firmware uses, bridging the gap between
-    ros2_control position commands and the DroneCAN transport (see docs/can_id_map.md).
+    Robot-agnostic ros2_control SystemInterface for VESC motor controllers over DroneCAN. Speaks
+    uavcan.equipment.esc.{RPMCommand,Status} for driven joints and
+    uavcan.equipment.actuator.{ArrayCommand,Status} for steered joints, directly over SocketCAN
+    using a vendored copy of the same libcanard codec the VESC firmware uses. Per-ESC pack
+    telemetry is exported as gpio state interfaces.
   </description>
   <maintainer email="uzi.mor@gmail.com">uzi.mor</maintainer>
   <license>Apache-2.0</license>
@@ -21,6 +22,6 @@
 
   <export>
     <build_type>ament_cmake</build_type>
-    <hardware_interface plugin="${prefix}/rp1_hardware_interface.xml"/>
+    <hardware_interface plugin="${prefix}/vesc_dronecan_driver.xml"/>
   </export>
 </package>

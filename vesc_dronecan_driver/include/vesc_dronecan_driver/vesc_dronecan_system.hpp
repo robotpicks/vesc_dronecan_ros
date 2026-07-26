@@ -1,5 +1,5 @@
-#ifndef RP1_HARDWARE_INTERFACE__RP1_HARDWARE_HPP_
-#define RP1_HARDWARE_INTERFACE__RP1_HARDWARE_HPP_
+#ifndef VESC_DRONECAN_DRIVER__VESC_DRONECAN_SYSTEM_HPP_
+#define VESC_DRONECAN_DRIVER__VESC_DRONECAN_SYSTEM_HPP_
 
 #include <string>
 #include <vector>
@@ -12,14 +12,15 @@ extern "C" {
 #include "canard.h"
 }
 
-namespace rp1_hardware_interface
+namespace vesc_dronecan_driver
 {
 
 // One drive wheel: a joint name (from URDF) paired with its DroneCAN
 // uavcan.equipment.esc.{RPMCommand,Status} esc_index -- the value that VESC's uavcan_esc_index
-// config field is set to (see docs/can_id_map.md). Commanded in velocity, because VESC's
-// RPMCommand handler routes to mc_interface_set_pid_speed(), a closed-loop speed PID. The older
-// esc.RawCommand path was duty cycle, which could not have backed a velocity interface honestly.
+// config field is set to (App Settings -> General -> UAVCAN ESC index in VESC Tool). Commanded in
+// velocity, because VESC's RPMCommand handler routes to mc_interface_set_pid_speed(), a
+// closed-loop speed PID. The older esc.RawCommand path was duty cycle, which could not have
+// backed a velocity interface honestly.
 struct DriveJoint
 {
   std::string name;
@@ -30,8 +31,12 @@ struct DriveJoint
 };
 
 // One steering actuator: joint name paired with its uavcan.equipment.actuator.{ArrayCommand,
-// Status} actuator_id (the same VESC uavcan_esc_index field, reused as actuator_id -- see
-// docs/can_id_map.md's "steering actuator_id = drive wheel index + 4" convention).
+// Status} actuator_id. VESC has no separate actuator_id field -- the same uavcan_esc_index is
+// reused as the actuator_id, so drive wheels and steering actuators share one id space and must
+// be allocated distinct values across the bus (see the README's id-allocation section).
+//
+// Steering requires firmware that handles uavcan.equipment.actuator.ArrayCommand/Status. Upstream
+// VESC firmware does NOT -- see the README's firmware-support section.
 struct SteeringJoint
 {
   std::string name;
@@ -42,8 +47,12 @@ struct SteeringJoint
 };
 
 // Per-ESC telemetry that has no natural joint interface: exported as <gpio> state interfaces so
-// it reaches /dynamic_joint_states via joint_state_broadcaster (rp1_elrs turns it into the
-// handset's BatteryState). Keyed to a drive wheel by the same esc_index.
+// it reaches /dynamic_joint_states via joint_state_broadcaster, for whatever consumes pack
+// telemetry downstream. Keyed to a drive wheel by the same esc_index.
+//
+// joint_state_broadcaster needs BOTH publish_dynamic_joint_states: true and
+// use_urdf_to_filter: false for these to appear -- see the README, both default to suppressing
+// them and neither failure is reported anywhere.
 struct EscTelemetry
 {
   std::string name;
@@ -58,10 +67,10 @@ struct EscTelemetry
 // node ID: drive wheels on esc.RPMCommand/Status, steering on actuator.ArrayCommand/Status.
 // Which kind a joint is comes from its URDF parameters -- "esc_index" for drive, "actuator_id"
 // for steering.
-class Rp1Hardware : public hardware_interface::SystemInterface
+class VescDroneCanSystem : public hardware_interface::SystemInterface
 {
 public:
-  RCLCPP_SHARED_PTR_DEFINITIONS(Rp1Hardware)
+  RCLCPP_SHARED_PTR_DEFINITIONS(VescDroneCanSystem)
 
   hardware_interface::CallbackReturn on_init(
     const hardware_interface::HardwareComponentInterfaceParams & params) override;
@@ -103,8 +112,7 @@ private:
   uint8_t local_node_id_ = 42;
   int socket_fd_ = -1;
 
-  // Motor revolutions per wheel revolution (gearbox and/or belt). §3.4.5 of
-  // docs/mechanical_request.md.
+  // Motor revolutions per wheel revolution (gearbox and/or belt). 1.0 is direct drive.
   double gear_ratio_ = 1.0;
   // Motor pole pairs = si_motor_poles / 2 in VESC's configuration.
   double motor_pole_pairs_ = 1.0;
@@ -121,6 +129,6 @@ private:
   rclcpp::Clock clock_{RCL_STEADY_TIME};
 };
 
-}  // namespace rp1_hardware_interface
+}  // namespace vesc_dronecan_driver
 
-#endif  // RP1_HARDWARE_INTERFACE__RP1_HARDWARE_HPP_
+#endif  // VESC_DRONECAN_DRIVER__VESC_DRONECAN_SYSTEM_HPP_
