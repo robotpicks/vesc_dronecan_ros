@@ -19,6 +19,8 @@ add_library(rp1_canard STATIC
   vendor/libcanard/dsdl/uavcan/equipment/actuator/actuator_Command.c
   vendor/libcanard/dsdl/uavcan/equipment/actuator/actuator_ArrayCommand.c
   vendor/libcanard/dsdl/uavcan/equipment/actuator/actuator_Status.c
+  vendor/libcanard/dsdl/uavcan/equipment/esc/esc_RPMCommand.c
+  vendor/libcanard/dsdl/uavcan/equipment/esc/esc_Status.c
 )
 target_include_directories(rp1_canard PUBLIC
   vendor/libcanard
@@ -28,7 +30,7 @@ target_compile_definitions(rp1_canard PUBLIC CANARD_ENABLE_CANFD=1)
 set_target_properties(rp1_canard PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(rp1_hardware_interface SHARED
-  src/steering_hardware.cpp
+  src/rp1_hardware.cpp
 )
 target_compile_features(rp1_hardware_interface PUBLIC cxx_std_17)
 target_include_directories(rp1_hardware_interface PUBLIC

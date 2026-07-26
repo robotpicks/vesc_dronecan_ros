@@ -1,4 +1,4 @@
-"""Brings up the rp1_hardware_interface SteeringHardware plugin under controller_manager, plus
+"""Brings up the rp1_hardware_interface Rp1Hardware plugin under controller_manager, plus
 joint_state_broadcaster and a position_controllers/JointGroupPositionController claiming the
 two steering joints' position command interfaces -- the real closed-loop-wiring test (still no
 encoder on the bench VESCs, so position feedback itself isn't meaningful yet, but this confirms
@@ -41,7 +41,9 @@ def generate_launch_description():
         executable='ros2_control_node',
         name='controller_manager',
         output='screen',
-        parameters=[{'robot_description': robot_description}, controller_manager_config],
+        # No robot_description parameter: controller_manager reads it off the
+        # /robot_description topic that robot_state_publisher latches above.
+        parameters=[controller_manager_config],
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -49,7 +51,7 @@ def generate_launch_description():
         executable='spawner',
         name='joint_state_broadcaster_spawner',
         output='screen',
-        arguments=['joint_state_broadcaster'],
+        arguments=['joint_state_broadcaster', '--param-file', controller_manager_config],
     )
 
     steering_position_controller_spawner = Node(
@@ -57,7 +59,7 @@ def generate_launch_description():
         executable='spawner',
         name='steering_position_controller_spawner',
         output='screen',
-        arguments=['steering_position_controller'],
+        arguments=['steering_position_controller', '--param-file', controller_manager_config],
     )
 
     return LaunchDescription([

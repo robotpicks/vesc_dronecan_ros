@@ -24,8 +24,11 @@
 
   <ros2_control name="rp1_steering" type="system">
     <hardware>
-      <plugin>rp1_hardware_interface/SteeringHardware</plugin>
+      <plugin>rp1_hardware_interface/Rp1Hardware</plugin>
       <param name="can_iface">can0</param>
+      <!-- Distinct from rp1_drive.urdf's 42: this bench description runs on its own, so the two
+           never share a bus at the same time. When the swerve controller merges drive and
+           steering into one description they collapse to a single node ID. -->
       <param name="node_id">44</param>
     </hardware>
     <joint name="steering_front_right">
