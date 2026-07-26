@@ -1,0 +1,13 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# C/C++
+*.o
+*.a
+*.so
