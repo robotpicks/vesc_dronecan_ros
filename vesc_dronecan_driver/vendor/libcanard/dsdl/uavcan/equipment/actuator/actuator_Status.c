@@ -74,6 +74,12 @@ uint32_t uavcan_equipment_actuator_Status_encode_internal(uavcan_equipment_actua
     canardEncodeScalar(msg_buf, offset, 7, (void*)&source->power_rating_pct); // 127
     offset += 7;
 
+    // Private extension (not standard DSDL) -- see Status.h's source-text comment.
+    canardEncodeScalar(msg_buf, offset, 1, (void*)&source->home_0deg);
+    offset += 1;
+    canardEncodeScalar(msg_buf, offset, 1, (void*)&source->home_90deg);
+    offset += 1;
+
     return offset;
 }
 
@@ -178,6 +184,20 @@ int32_t uavcan_equipment_actuator_Status_decode_internal(
         goto uavcan_equipment_actuator_Status_error_exit;
     }
     offset += 7;
+
+    // Private extension (not standard DSDL) -- see Status.h's source-text comment.
+    ret = canardDecodeScalar(transfer, (uint32_t)offset, 1, false, (void*)&dest->home_0deg);
+    if (ret != 1)
+    {
+        goto uavcan_equipment_actuator_Status_error_exit;
+    }
+    offset += 1;
+    ret = canardDecodeScalar(transfer, (uint32_t)offset, 1, false, (void*)&dest->home_90deg);
+    if (ret != 1)
+    {
+        goto uavcan_equipment_actuator_Status_error_exit;
+    }
+    offset += 1;
 
     return offset;
 

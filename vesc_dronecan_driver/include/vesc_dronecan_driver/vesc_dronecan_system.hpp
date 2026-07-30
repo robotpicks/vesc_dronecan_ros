@@ -1,6 +1,7 @@
 #ifndef VESC_DRONECAN_DRIVER__VESC_DRONECAN_SYSTEM_HPP_
 #define VESC_DRONECAN_DRIVER__VESC_DRONECAN_SYSTEM_HPP_
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,28 @@ struct SteeringJoint
   double position_state = 0.0;   // radians, from actuator.Status
   double velocity_state = 0.0;   // rad/s, from actuator.Status
   double position_command = 0.0; // radians, sent as actuator.ArrayCommand
+
+  // Edge-triggered "seek home" command -- see the "seek_home" <gpio> command interface in
+  // SteeringSensors below. NaN means no seek is commanded; 0.0/1.0 mirror
+  // UAVCAN_EQUIPMENT_ACTUATOR_COMMAND_HOME_TARGET_0DEG/90DEG. Sent as a single
+  // COMMAND_TYPE_HOME actuator.Command the cycle the command interface's value changes to a
+  // non-NaN value, not resent every cycle -- the firmware's own homing_tick() (see the bldc
+  // repo's canard_driver.c) supervises the seek and times it out on its own; re-sending every
+  // control-loop cycle would keep resetting that timeout and defeat it.
+  double last_seek_home_command = std::numeric_limits<double>::quiet_NaN();
+};
+
+// Per-steering-actuator sensor status that has no natural joint interface: the 0/90-degree
+// proximity ("home") switches, from actuator.Status's private home_0deg/home_90deg bits (see
+// the bldc repo's Status.h). Exported as <gpio> state interfaces the same way EscTelemetry
+// exports ESC pack telemetry -- reaches /dynamic_joint_states via joint_state_broadcaster, same
+// caveats about publish_dynamic_joint_states/use_urdf_to_filter apply (see the README).
+struct SteeringSensors
+{
+  std::string name;
+  uint8_t actuator_id = 0;
+  double home_0deg = 0.0;  // 1.0 if the 0-degree proximity sensor is currently triggered
+  double home_90deg = 0.0; // 1.0 if the 90-degree proximity sensor is currently triggered
 };
 
 // Per-ESC telemetry that has no natural joint interface: exported as <gpio> state interfaces so
@@ -107,6 +130,7 @@ private:
   std::vector<DriveJoint> drive_joints_;
   std::vector<SteeringJoint> steering_joints_;
   std::vector<EscTelemetry> esc_telemetry_;
+  std::vector<SteeringSensors> steering_sensors_;
 
   std::string can_iface_ = "can0";
   uint8_t local_node_id_ = 42;

@@ -118,26 +118,42 @@ hardware_interface::CallbackReturn VescDroneCanSystem::on_init(
     }
   }
 
-  // <gpio> blocks carry the per-ESC telemetry that has no joint interface of its own.
+  // <gpio> blocks carry the per-ESC telemetry and per-steering-actuator sensor status that have
+  // no joint interface of their own -- distinguished by which id parameter they declare, the
+  // same esc_index/actuator_id split the joints above use.
   esc_telemetry_.clear();
+  steering_sensors_.clear();
   for (const auto & gpio : info.gpios) {
-    auto it = gpio.parameters.find("esc_index");
-    if (it == gpio.parameters.end()) {
+    auto esc_it = gpio.parameters.find("esc_index");
+    auto actuator_it = gpio.parameters.find("actuator_id");
+    if (esc_it != gpio.parameters.end() == (actuator_it != gpio.parameters.end())) {
       RCLCPP_ERROR(
-        logger(), "GPIO '%s' is missing the required 'esc_index' parameter", gpio.name.c_str());
+        logger(), "GPIO '%s' must declare exactly one of 'esc_index' or 'actuator_id'",
+        gpio.name.c_str());
       return hardware_interface::CallbackReturn::ERROR;
     }
-    EscTelemetry telemetry;
-    telemetry.name = gpio.name;
-    telemetry.esc_index = static_cast<uint8_t>(std::stoi(it->second));
-    esc_telemetry_.push_back(telemetry);
+
+    if (esc_it != gpio.parameters.end()) {
+      EscTelemetry telemetry;
+      telemetry.name = gpio.name;
+      telemetry.esc_index = static_cast<uint8_t>(std::stoi(esc_it->second));
+      esc_telemetry_.push_back(telemetry);
+    } else {
+      SteeringSensors sensors;
+      sensors.name = gpio.name;
+      sensors.actuator_id = static_cast<uint8_t>(std::stoi(actuator_it->second));
+      steering_sensors_.push_back(sensors);
+    }
   }
 
   canard_memory_pool_.resize(4096);
 
   RCLCPP_INFO(
-    logger(), "vesc_dronecan_driver configured: %zu drive, %zu steering, %zu ESC telemetry",
-    drive_joints_.size(), steering_joints_.size(), esc_telemetry_.size());
+    logger(),
+    "vesc_dronecan_driver configured: %zu drive, %zu steering, %zu ESC telemetry, "
+    "%zu steering sensors",
+    drive_joints_.size(), steering_joints_.size(), esc_telemetry_.size(),
+    steering_sensors_.size());
 
   return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -288,6 +304,11 @@ hardware_interface::return_type VescDroneCanSystem::read(
     set_state(telemetry.name + "/temperature", telemetry.temperature);
   }
 
+  for (const auto & sensors : steering_sensors_) {
+    set_state(sensors.name + "/home_0deg", sensors.home_0deg);
+    set_state(sensors.name + "/home_90deg", sensors.home_90deg);
+  }
+
   return hardware_interface::return_type::OK;
 }
 
@@ -328,14 +349,35 @@ void VescDroneCanSystem::broadcastRpmCommand()
 void VescDroneCanSystem::broadcastActuatorCommand()
 {
   std::vector<uavcan_equipment_actuator_Command> commands;
-  commands.reserve(steering_joints_.size());
-  for (const auto & joint : steering_joints_) {
-    uavcan_equipment_actuator_Command cmd{};
-    cmd.actuator_id = joint.actuator_id;
-    cmd.command_type = UAVCAN_EQUIPMENT_ACTUATOR_COMMAND_COMMAND_TYPE_POSITION;
-    cmd.command_value =
+  commands.reserve(steering_joints_.size() * 2);
+  for (auto & joint : steering_joints_) {
+    uavcan_equipment_actuator_Command position_cmd{};
+    position_cmd.actuator_id = joint.actuator_id;
+    position_cmd.command_type = UAVCAN_EQUIPMENT_ACTUATOR_COMMAND_COMMAND_TYPE_POSITION;
+    position_cmd.command_value =
       static_cast<float>(get_command(joint.name + "/" + hardware_interface::HW_IF_POSITION));
-    commands.push_back(cmd);
+    commands.push_back(position_cmd);
+
+    // Edge-triggered: only send COMMAND_TYPE_HOME the cycle this joint's "seek_home" command
+    // interface value actually changes to a non-NaN value, not every cycle -- see
+    // SteeringJoint::last_seek_home_command's comment for why (the firmware's own homing_tick()
+    // owns the timeout once armed). Optional interface: joints that don't declare "seek_home" in
+    // their URDF (e.g. a joint with no proximity sensors wired) just never send it.
+    if (has_command(joint.name + "/seek_home")) {
+      double seek_home = get_command(joint.name + "/seek_home");
+      bool is_new_command =
+        std::isfinite(seek_home) &&
+        (!std::isfinite(joint.last_seek_home_command) ||
+         seek_home != joint.last_seek_home_command);
+      if (is_new_command) {
+        uavcan_equipment_actuator_Command home_cmd{};
+        home_cmd.actuator_id = joint.actuator_id;
+        home_cmd.command_type = UAVCAN_EQUIPMENT_ACTUATOR_COMMAND_COMMAND_TYPE_HOME;
+        home_cmd.command_value = static_cast<float>(seek_home);
+        commands.push_back(home_cmd);
+      }
+      joint.last_seek_home_command = seek_home;
+    }
   }
 
   uavcan_equipment_actuator_ArrayCommand msg{};
@@ -402,6 +444,14 @@ void VescDroneCanSystem::handleActuatorStatus(CanardRxTransfer * transfer)
     if (joint.actuator_id == status.actuator_id) {
       joint.position_state = status.position;
       joint.velocity_state = status.speed;
+      break;
+    }
+  }
+
+  for (auto & sensors : steering_sensors_) {
+    if (sensors.actuator_id == status.actuator_id) {
+      sensors.home_0deg = status.home_0deg ? 1.0 : 0.0;
+      sensors.home_90deg = status.home_90deg ? 1.0 : 0.0;
       break;
     }
   }
