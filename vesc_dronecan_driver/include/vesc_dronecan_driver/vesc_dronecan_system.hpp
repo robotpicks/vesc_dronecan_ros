@@ -54,6 +54,13 @@ struct SteeringJoint
   // repo's canard_driver.c) supervises the seek and times it out on its own; re-sending every
   // control-loop cycle would keep resetting that timeout and defeat it.
   double last_seek_home_command = std::numeric_limits<double>::quiet_NaN();
+
+  // Steering-hold brake -- see the "brake" command interface. Unlike seek_home, this is a level,
+  // not an edge-triggered action (nonzero engages/locks, 0.0 releases, per bldc's
+  // canard_driver.c), so it's simply read fresh and resent as a COMMAND_TYPE_BRAKE
+  // actuator.Command every write() cycle -- no "last commanded" tracking needed, and re-sending
+  // the same value has no side effect on the firmware side (a level GPIO write, not a state
+  // machine trigger like HOME).
 };
 
 // Per-steering-actuator sensor status that has no natural joint interface: the 0/90-degree

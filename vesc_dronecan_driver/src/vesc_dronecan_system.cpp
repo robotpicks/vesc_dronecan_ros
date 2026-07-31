@@ -359,7 +359,7 @@ void VescDroneCanSystem::broadcastRpmCommand()
 void VescDroneCanSystem::broadcastActuatorCommand()
 {
   std::vector<uavcan_equipment_actuator_Command> commands;
-  commands.reserve(steering_joints_.size() * 2);
+  commands.reserve(steering_joints_.size() * 3);
   for (auto & joint : steering_joints_) {
     uavcan_equipment_actuator_Command position_cmd{};
     position_cmd.actuator_id = joint.actuator_id;
@@ -387,6 +387,27 @@ void VescDroneCanSystem::broadcastActuatorCommand()
         commands.push_back(home_cmd);
       }
       joint.last_seek_home_command = seek_home;
+    }
+
+    // Level, not edge-triggered (unlike seek_home): nonzero engages/locks the brake, 0.0 releases
+    // -- see canard_driver.c's COMMAND_TYPE_BRAKE handling. Resent every cycle so a dropped frame
+    // self-heals rather than leaving the brake stuck in a stale state; re-sending the same value
+    // is a no-op GPIO write on the firmware side, not a state-machine trigger like HOME. Optional
+    // interface, same reasoning as seek_home: a hardware component with no physical brake output
+    // (gz_ros2_control's GazeboSimSystem) just never gets asked for it.
+    //
+    // Confirmed live over vcan0: in the brief window where this hardware component is active but
+    // rp1_swerve_controller hasn't activated yet, get_command() here returns the interface's
+    // uninitialized NaN default, and firmware's `command_value != 0.0f` reads that as true --
+    // i.e. ENGAGE. That's a beneficial fail-safe (steering holds stiff before any controller is
+    // in charge, rather than going limp), not a bug -- don't special-case NaN to avoid sending
+    // it.
+    if (has_command(joint.name + "/brake")) {
+      uavcan_equipment_actuator_Command brake_cmd{};
+      brake_cmd.actuator_id = joint.actuator_id;
+      brake_cmd.command_type = UAVCAN_EQUIPMENT_ACTUATOR_COMMAND_COMMAND_TYPE_BRAKE;
+      brake_cmd.command_value = static_cast<float>(get_command(joint.name + "/brake"));
+      commands.push_back(brake_cmd);
     }
   }
 
