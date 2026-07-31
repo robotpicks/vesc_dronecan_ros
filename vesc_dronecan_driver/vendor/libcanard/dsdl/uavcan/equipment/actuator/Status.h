@@ -40,6 +40,21 @@ float16 speed            # meter per second or radian per second
 void1
 uint7 POWER_RATING_PCT_UNKNOWN = 127
 uint7 power_rating_pct                # 0 - unloaded, 100 - full load
+
+# Not part of the standard uavcan.equipment.actuator.Status DSDL -- private to this fork's
+# steering actuator, meaningful only between rp1_hardware_interface and this firmware (see
+# COMMAND_TYPE_BRAKE in Command.h for the same pattern on the command side). Grows the message
+# from 64 to 66 bits (8 -> 9 bytes) -- this is a real wire-format change, not just a reinterpreted
+# existing field, so the SIGNATURE below is deliberately left at the stock value rather than
+# recomputed (no DSDL compiler available in the environment this was authored in): fine as long
+# as both ends of this closed system (this firmware and vesc_dronecan_driver) agree, which they
+# do by construction, but NOT a real UAVCAN-compliant signature for this extended definition.
+#
+# bit0: home_0deg  -- steering axis's 0-degree proximity sensor (ADC1/PA5, digital GPIO read)
+# bit1: home_90deg -- steering axis's 90-degree proximity sensor (ADC2/PA6, digital GPIO read)
+uint6 void
+uint1 home_90deg
+uint1 home_0deg
 ******************************************************************************/
 
 /********************* DSDL signature source definition ***********************
@@ -56,7 +71,7 @@ saturated uint7 power_rating_pct
 #define UAVCAN_EQUIPMENT_ACTUATOR_STATUS_NAME               "uavcan.equipment.actuator.Status"
 #define UAVCAN_EQUIPMENT_ACTUATOR_STATUS_SIGNATURE          (0x5E9BBA44FAF1EA04ULL)
 
-#define UAVCAN_EQUIPMENT_ACTUATOR_STATUS_MAX_SIZE           ((64 + 7)/8)
+#define UAVCAN_EQUIPMENT_ACTUATOR_STATUS_MAX_SIZE           ((66 + 7)/8)
 
 // Constants
 
@@ -70,6 +85,8 @@ typedef struct
     float      force;                         // float16 Saturate
     float      speed;                         // float16 Saturate
     uint8_t    power_rating_pct;              // bit len 7
+    uint8_t    home_0deg;                     // bit len 1 -- private extension, see source text above
+    uint8_t    home_90deg;                    // bit len 1 -- private extension, see source text above
 
 } uavcan_equipment_actuator_Status;
 

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    # lyrical (rp1's actual dev/target distro -- see rp1/CLAUDE.md) pairs with 26.04.
+    runs-on: ubuntu-26.04
+    env:
+      # rosdep needs this to resolve any key at all -- without it, `rosdep install` silently
+      # resolves nothing ("ROS distro is not set") instead of erroring, so hardware_interface
+      # (part of ros2_control, not the "desktop" metapackage setup-ros installs by default) never
+      # gets installed and colcon build fails with a CMake "could not find hardware_interface"
+      # error that looks unrelated to the real cause.
+      ROS_DISTRO: lyrical
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src/vesc_dronecan_ros
+
+      - uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: lyrical
+
+      # setup-ros only installs ros-<distro>-desktop by default -- the ros2_control stack
+      # (hardware_interface, controller_manager, ...) is a separate metapackage group, not part
+      # of "desktop". Installed explicitly here as a broader safety net alongside rosdep install
+      # below (which already resolves this package's own declared deps correctly), matching the
+      # dev sandbox this project is built/tested in.
+      - name: Install ros2_control metapackages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            ros-lyrical-desktop-full \
+            ros-lyrical-ros2-control \
+            ros-lyrical-ros2-controllers
+
+      # Explicit rosdep/colcon steps instead of ros-tooling/action-ros-ci: that action
+      # internally re-clones the checked-out repo over unauthenticated HTTPS to diff it, which
+      # fails for a private repo ("Could not read Username for 'https://github.com'") -- no
+      # token input exists for that internal step.
+      - name: rosdep install
+        run: |
+          sudo rosdep init || true
+          rosdep update
+          rosdep install --from-paths src --ignore-src -r -y
+
+      - name: colcon build
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          colcon build --symlink-install
+
+      - name: colcon test
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          colcon test
+          colcon test-result --verbose
