@@ -8,6 +8,13 @@ jobs:
   build-and-test:
     # lyrical (rp1's actual dev/target distro -- see rp1/CLAUDE.md) pairs with 26.04.
     runs-on: ubuntu-26.04
+    env:
+      # rosdep needs this to resolve any key at all -- without it, `rosdep install` silently
+      # resolves nothing ("ROS distro is not set") instead of erroring, so hardware_interface
+      # (part of ros2_control, not the "desktop" metapackage setup-ros installs by default) never
+      # gets installed and colcon build fails with a CMake "could not find hardware_interface"
+      # error that looks unrelated to the real cause.
+      ROS_DISTRO: lyrical
     steps:
       - uses: actions/checkout@v4
         with:
