@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    # lyrical (rp1's actual dev/target distro -- see rp1/CLAUDE.md) pairs with 26.04.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src/vesc_dronecan_ros
+
+      - uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: lyrical
+
+      - uses: ros-tooling/action-ros-ci@v0.4
+        with:
+          package-name: vesc_dronecan_driver
+          target-ros2-distro: lyrical
