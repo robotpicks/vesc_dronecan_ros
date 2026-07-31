@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -254,7 +255,16 @@ void VescDroneCanSystem::pumpRx()
     frame.canfd = false;
     std::memcpy(frame.data, raw_frame.data, raw_frame.can_dlc);
 
-    canardHandleRxFrame(&canard_ins_, &frame, 0);
+    // Must be a real, monotonically increasing microsecond timestamp, not a constant: libcanard's
+    // multi-frame reassembly (canard.c's canardHandleRxFrame) treats rx_state->timestamp_usec==0
+    // as "state never initialized" (need_restart's `not_initialized` check). A hardcoded 0 here
+    // made every second-and-later frame of any multi-frame transfer look uninitialized again,
+    // wiping the already-buffered payload and aborting with RX_MISSED_START -- so esc.Status
+    // (~14 bytes, 3 frames) and actuator.Status (~9 bytes, 2 frames) were silently dropped in
+    // their entirety, every time, while single-frame transfers were unaffected.
+    const auto now_usec = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+    canardHandleRxFrame(&canard_ins_, &frame, static_cast<uint64_t>(now_usec));
   }
 }
 
