@@ -185,19 +185,21 @@ int32_t uavcan_equipment_actuator_Status_decode_internal(
     }
     offset += 7;
 
-    // Private extension (not standard DSDL) -- see Status.h's source-text comment.
-    ret = canardDecodeScalar(transfer, (uint32_t)offset, 1, false, (void*)&dest->home_0deg);
-    if (ret != 1)
+    // Private extension (not standard DSDL) -- see Status.h's source-text comment. Deliberately
+    // tolerant of these 2 bits being absent (dest->home_0deg/home_90deg stay at the zero-init
+    // uavcan_equipment_actuator_Status_decode already did): a sender with no knowledge of the
+    // extension -- a stock UAVCAN/DroneCAN actuator.Status, e.g. the Python `dronecan` package's
+    // codec used by rp1/simulation's sim_actuator_node.py, or any not-yet-updated real VESC --
+    // ends its transfer exactly here, and a hard failure on the extension bits would have thrown
+    // away the position/force/speed/power_rating_pct/actuator_id fields that decoded just fine.
+    if (canardDecodeScalar(transfer, (uint32_t)offset, 1, false, (void*)&dest->home_0deg) == 1)
     {
-        goto uavcan_equipment_actuator_Status_error_exit;
+        offset += 1;
+        if (canardDecodeScalar(transfer, (uint32_t)offset, 1, false, (void*)&dest->home_90deg) == 1)
+        {
+            offset += 1;
+        }
     }
-    offset += 1;
-    ret = canardDecodeScalar(transfer, (uint32_t)offset, 1, false, (void*)&dest->home_90deg);
-    if (ret != 1)
-    {
-        goto uavcan_equipment_actuator_Status_error_exit;
-    }
-    offset += 1;
 
     return offset;
 
