@@ -8,6 +8,7 @@
 #include "hardware_interface/system_interface.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/macros.hpp"
+#include "rclcpp/time.hpp"
 
 extern "C" {
 #include "canard.h"
@@ -29,6 +30,13 @@ struct DriveJoint
   double velocity_state = 0.0;   // rad/s at the wheel, from esc.Status
   double position_state = 0.0;   // rad, integrated from velocity -- esc.Status carries no position
   double velocity_command = 0.0; // rad/s at the wheel, sent as esc.RPMCommand
+
+  // Steady-clock time of the last esc.Status seen from this esc_index -- default-initialized to
+  // "epoch" (time 0 on the steady clock) so a VESC that has never sent a single Status reads as
+  // immediately stale, the same as one that dropped off mid-run. Reset in on_activate() so a
+  // previous activation's timestamp can't linger across a deactivate/reactivate cycle. Drives the
+  // esc-presence watchdog in write() -- see esc_timeout_sec_.
+  rclcpp::Time last_status_time{0, 0, RCL_STEADY_TIME};
 };
 
 // One steering actuator: joint name paired with its uavcan.equipment.actuator.{ArrayCommand,
@@ -127,8 +135,12 @@ private:
   void handleEscStatus(CanardRxTransfer * transfer);
   void pumpTxQueue();
   void pumpRx();
-  void broadcastRpmCommand();
+  void broadcastRpmCommand(bool force_stop);
   void broadcastActuatorCommand();
+
+  // True iff every configured drive esc_index has sent an esc.Status within esc_timeout_sec_ of
+  // `now`. Appends each missing esc_index to `missing` (if non-null) for logging.
+  bool allDriveEscsPresent(const rclcpp::Time & now, std::vector<uint8_t> * missing) const;
 
   // rad/s at the wheel -> the value to put in esc.RPMCommand, and back again for feedback.
   double wheelRadPerSecToCommandRpm(double rad_per_sec) const;
@@ -154,6 +166,11 @@ private:
   // Default true matches the firmware as it stands. If the fork is fixed to scale the command
   // side too, set this false in the URDF and the extra factor drops out.
   bool command_rpm_is_erpm_ = true;
+  // Safety watchdog: if any configured drive esc_index hasn't sent an esc.Status within this
+  // many seconds -- whether it never showed up on the bus at all, or dropped off mid-run -- write()
+  // commands zero RPM to ALL drive wheels, not just the missing one, until every esc_index is
+  // heard from again. See broadcastRpmCommand()/allDriveEscsPresent().
+  double esc_timeout_sec_ = 0.5;
 
   CanardInstance canard_ins_{};
   std::vector<uint8_t> canard_memory_pool_;

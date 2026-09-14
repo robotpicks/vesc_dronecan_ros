@@ -77,6 +77,7 @@ Add a `<ros2_control>` block to your robot description. A complete, commented ex
 | `gear_ratio` | `1.0` | Motor revolutions per joint revolution. `1.0` = direct drive. |
 | `motor_pole_pairs` | `1.0` | `si_motor_poles / 2` from VESC motor detection. |
 | `command_rpm_is_erpm` | `true` | Compensate for the firmware's RPM unit asymmetry — see below. |
+| `esc_timeout_sec` | `0.5` | Drive esc-presence watchdog — see below. |
 
 `can_iface` **cannot be overridden as a node parameter** — ros2_control reads hardware parameters
 from the robot description and nowhere else. To make it switchable, rewrite the string in your
@@ -124,6 +125,24 @@ count. `command_rpm_is_erpm: true` (the default) compensates on the command side
 firmware as it stands. Set it `false` only if your firmware scales the command side too.
 
 If your robot drives at `pole_pairs` times the commanded speed, this parameter is why.
+
+### Esc-presence watchdog
+
+`write()` tracks the time each configured drive `esc_index` last sent an `esc.Status`. If **any**
+of them goes longer than `esc_timeout_sec` without one — because it never showed up on the bus at
+all (nothing arrives before the first `esc.Status`, so a never-connected ESC starts out "missing"
+immediately), or because it dropped off mid-run (a disconnected connector, a browned-out VESC,
+CAN bus-off) — the component commands **zero RPM to every configured drive wheel**, not just the
+missing one, until every `esc_index` is heard from again. This is a deliberate all-stop, not a
+per-wheel degrade: a 4-wheel skid-steer robot missing one drive wheel's feedback can't be trusted
+to drive straight or stop cleanly on the remaining three, so the safer failure is to stop them
+all. Logged at `ERROR`, throttled to once/second, naming which `esc_index`(es) are missing.
+
+This is independent of, and in addition to, whatever command-source watchdog feeds this
+component's velocity command interfaces (e.g. a teleop node's joystick-staleness check, or
+`diff_drive_controller`'s own `cmd_vel_timeout`) — those stop a *healthy* robot when nobody is
+driving it; this stops the robot when the CAN bus itself can no longer be trusted, regardless of
+what the controller above is commanding.
 
 ## Firmware support for steered joints
 

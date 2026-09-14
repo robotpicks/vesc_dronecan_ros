@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <sstream>
 
 #include <fcntl.h>
 #include <linux/can.h>
@@ -83,11 +84,14 @@ hardware_interface::CallbackReturn VescDroneCanSystem::on_init(
   if (auto * v = param("command_rpm_is_erpm")) {
     command_rpm_is_erpm_ = (*v == "true" || *v == "True" || *v == "1");
   }
+  if (auto * v = param("esc_timeout_sec")) {
+    esc_timeout_sec_ = parseDouble(*v, esc_timeout_sec_);
+  }
 
-  if (gear_ratio_ <= 0.0 || motor_pole_pairs_ <= 0.0) {
+  if (gear_ratio_ <= 0.0 || motor_pole_pairs_ <= 0.0 || esc_timeout_sec_ <= 0.0) {
     RCLCPP_ERROR(
-      logger(), "gear_ratio (%f) and motor_pole_pairs (%f) must both be positive", gear_ratio_,
-      motor_pole_pairs_);
+      logger(), "gear_ratio (%f), motor_pole_pairs (%f) and esc_timeout_sec (%f) must all be "
+      "positive", gear_ratio_, motor_pole_pairs_, esc_timeout_sec_);
     return hardware_interface::CallbackReturn::ERROR;
   }
 
@@ -162,6 +166,12 @@ hardware_interface::CallbackReturn VescDroneCanSystem::on_init(
 hardware_interface::CallbackReturn VescDroneCanSystem::on_activate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
+  // Reset the esc-presence watchdog so a timestamp from a previous activation can't linger and
+  // make a currently-missing ESC read as "recently seen".
+  for (auto & joint : drive_joints_) {
+    joint.last_status_time = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+  }
+
   canardInit(
     &canard_ins_, canard_memory_pool_.data(), canard_memory_pool_.size(), &onTransferReceived,
     &shouldAcceptTransfer, this);
@@ -201,9 +211,9 @@ hardware_interface::CallbackReturn VescDroneCanSystem::on_activate(
   RCLCPP_INFO(
     logger(),
     "vesc_dronecan_driver up on %s (node_id=%d, %zu drive + %zu steering joint(s), "
-    "gear_ratio=%.4f, pole_pairs=%.1f, command_rpm_is_erpm=%s)",
+    "gear_ratio=%.4f, pole_pairs=%.1f, command_rpm_is_erpm=%s, esc_timeout_sec=%.2f)",
     can_iface_.c_str(), local_node_id_, drive_joints_.size(), steering_joints_.size(), gear_ratio_,
-    motor_pole_pairs_, command_rpm_is_erpm_ ? "true" : "false");
+    motor_pole_pairs_, command_rpm_is_erpm_ ? "true" : "false", esc_timeout_sec_);
 
   return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -322,7 +332,7 @@ hardware_interface::return_type VescDroneCanSystem::read(
   return hardware_interface::return_type::OK;
 }
 
-void VescDroneCanSystem::broadcastRpmCommand()
+void VescDroneCanSystem::broadcastRpmCommand(bool force_stop)
 {
   // RPMCommand is a broadcast array indexed by esc_index: every VESC on the bus receives the same
   // message and picks out its own slot, so the array has to be long enough to reach the highest
@@ -332,15 +342,20 @@ void VescDroneCanSystem::broadcastRpmCommand()
     max_index = std::max(max_index, joint.esc_index);
   }
 
+  // force_stop (set by write() when the esc-presence watchdog trips) leaves every slot at its
+  // zero-initialized default -- deliberately skipping get_command() below, not just clamping its
+  // result, so a missing ESC halts every OTHER drive wheel too, not only the one that dropped.
   std::vector<int32_t> rpm(static_cast<size_t>(max_index) + 1, 0);
-  for (const auto & joint : drive_joints_) {
-    double value = wheelRadPerSecToCommandRpm(
-      get_command(joint.name + "/" + hardware_interface::HW_IF_VELOCITY));
-    if (!std::isfinite(value)) {
-      value = 0.0;
+  if (!force_stop) {
+    for (const auto & joint : drive_joints_) {
+      double value = wheelRadPerSecToCommandRpm(
+        get_command(joint.name + "/" + hardware_interface::HW_IF_VELOCITY));
+      if (!std::isfinite(value)) {
+        value = 0.0;
+      }
+      value = std::clamp(value, -kEscRpmMax, kEscRpmMax);
+      rpm[joint.esc_index] = static_cast<int32_t>(std::lround(value));
     }
-    value = std::clamp(value, -kEscRpmMax, kEscRpmMax);
-    rpm[joint.esc_index] = static_cast<int32_t>(std::lround(value));
   }
 
   uavcan_equipment_esc_RPMCommand msg{};
@@ -429,7 +444,23 @@ hardware_interface::return_type VescDroneCanSystem::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
   if (!drive_joints_.empty()) {
-    broadcastRpmCommand();
+    std::vector<uint8_t> missing;
+    const bool all_present = allDriveEscsPresent(clock_.now(), &missing);
+    if (!all_present) {
+      std::ostringstream missing_str;
+      for (size_t i = 0; i < missing.size(); ++i) {
+        if (i > 0) {
+          missing_str << ", ";
+        }
+        missing_str << static_cast<int>(missing[i]);
+      }
+      RCLCPP_ERROR_THROTTLE(
+        logger(), clock_, 1000,
+        "vesc_dronecan_driver: esc_index [%s] missing from the CAN bus (no esc.Status within "
+        "%.2fs) -- forcing zero RPMCommand to ALL %zu drive wheel(s)",
+        missing_str.str().c_str(), esc_timeout_sec_, drive_joints_.size());
+    }
+    broadcastRpmCommand(!all_present);
   }
   if (!steering_joints_.empty()) {
     broadcastActuatorCommand();
@@ -438,6 +469,21 @@ hardware_interface::return_type VescDroneCanSystem::write(
   pumpTxQueue();
 
   return hardware_interface::return_type::OK;
+}
+
+bool VescDroneCanSystem::allDriveEscsPresent(
+  const rclcpp::Time & now, std::vector<uint8_t> * missing) const
+{
+  bool all_present = true;
+  for (const auto & joint : drive_joints_) {
+    if ((now - joint.last_status_time).seconds() > esc_timeout_sec_) {
+      all_present = false;
+      if (missing != nullptr) {
+        missing->push_back(joint.esc_index);
+      }
+    }
+  }
+  return all_present;
 }
 
 void VescDroneCanSystem::handleEscStatus(CanardRxTransfer * transfer)
@@ -450,6 +496,7 @@ void VescDroneCanSystem::handleEscStatus(CanardRxTransfer * transfer)
   for (auto & joint : drive_joints_) {
     if (joint.esc_index == status.esc_index) {
       joint.velocity_state = statusRpmToWheelRadPerSec(static_cast<double>(status.rpm));
+      joint.last_status_time = clock_.now();
       break;
     }
   }
