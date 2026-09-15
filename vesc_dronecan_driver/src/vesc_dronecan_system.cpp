@@ -9,6 +9,7 @@
 
 #include <fcntl.h>
 #include <linux/can.h>
+#include <linux/can/error.h>
 #include <linux/can/raw.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -208,6 +209,21 @@ hardware_interface::CallbackReturn VescDroneCanSystem::on_activate(
   int flags = fcntl(socket_fd_, F_GETFL, 0);
   fcntl(socket_fd_, F_SETFL, flags | O_NONBLOCK);
 
+  // Subscribe to CAN error-class frames alongside normal data frames: with this set, SocketCAN
+  // surfaces bus health (bit/form/stuff errors, error-warning/passive thresholds, bus-off) as
+  // pseudo can_frames on this same socket instead of it being invisible. That matters here
+  // because this bench's gs_usb adapter firmware doesn't support `restart-ms` (confirmed
+  // 2026-08-05) -- a noise-induced bus-off doesn't self-clear, and today the first sign of any
+  // of this is the esc-presence watchdog force-stopping the drive several esc_timeout_sec_ later,
+  // with no record of what actually happened on the wire. Logging only for now -- see
+  // handleErrorFrame(); this does not attempt to recover the bus itself.
+  can_err_mask_t err_mask = CAN_ERR_MASK;
+  if (setsockopt(socket_fd_, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &err_mask, sizeof(err_mask)) < 0) {
+    RCLCPP_WARN(
+      logger(), "Failed to enable CAN error-frame reporting on '%s': %s -- bus errors (bit "
+      "errors, bus-off, etc.) will not be logged", can_iface_.c_str(), std::strerror(errno));
+  }
+
   RCLCPP_INFO(
     logger(),
     "vesc_dronecan_driver up on %s (node_id=%d, %zu drive + %zu steering joint(s), "
@@ -259,6 +275,14 @@ void VescDroneCanSystem::pumpRx()
       continue;
     }
 
+    // Error-class frames (from the CAN_RAW_ERR_FILTER set in on_activate()) aren't DroneCAN
+    // data -- canardHandleRxFrame() below would either reject or, worse, misinterpret the
+    // reused can_id bits. Peel them off here.
+    if (raw_frame.can_id & CAN_ERR_FLAG) {
+      handleErrorFrame(raw_frame);
+      continue;
+    }
+
     CanardCANFrame frame{};
     frame.id = raw_frame.can_id;
     frame.data_len = raw_frame.can_dlc;
@@ -275,6 +299,85 @@ void VescDroneCanSystem::pumpRx()
     const auto now_usec = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
     canardHandleRxFrame(&canard_ins_, &frame, static_cast<uint64_t>(now_usec));
+  }
+}
+
+void VescDroneCanSystem::handleErrorFrame(const struct can_frame & frame)
+{
+  // Layout per linux/can/error.h: the error class lives in can_id (masked with CAN_ERR_MASK to
+  // drop the EFF/RTR/ERR flag bits themselves), controller state in data[1], protocol-error
+  // type/location in data[2]/data[3], and TX/RX error counters in data[6]/data[7] (valid when
+  // CAN_ERR_CNT is set -- not checked below since data[6]/data[7] are zeroed when it's not, which
+  // reads fine as "counters unknown").
+  const canid_t error_class = frame.can_id & CAN_ERR_MASK;
+  const uint8_t ctrl = frame.data[1];
+  const uint8_t proto_type = frame.data[2];
+  const uint8_t proto_loc = frame.data[3];
+  const uint8_t tx_errors = frame.data[6];
+  const uint8_t rx_errors = frame.data[7];
+
+  // Bus-off is the one state that doesn't resolve itself here: this adapter can't do kernel-level
+  // `restart-ms` recovery (confirmed on the bench), so the bus stays dead until someone runs
+  // `ip link set <iface> down && up` or replugs it. ERROR and un-throttled -- this should never
+  // scroll by unnoticed.
+  if (error_class & CAN_ERR_BUSOFF) {
+    RCLCPP_ERROR(
+      logger(),
+      "CAN bus-off on '%s' -- this adapter can't auto-recover; needs `ip link set %s down && "
+      "ip link set %s up` (or a replug) to clear",
+      can_iface_.c_str(), can_iface_.c_str(), can_iface_.c_str());
+  }
+
+  if (error_class & CAN_ERR_RESTARTED) {
+    RCLCPP_INFO(logger(), "CAN controller on '%s' restarted", can_iface_.c_str());
+  }
+
+  if (error_class & CAN_ERR_CRTL) {
+    if (ctrl & (CAN_ERR_CRTL_TX_PASSIVE | CAN_ERR_CRTL_RX_PASSIVE)) {
+      RCLCPP_ERROR_THROTTLE(
+        logger(), clock_, 1000,
+        "CAN controller on '%s' is error-passive (tx_err=%u rx_err=%u) -- one bad frame from "
+        "bus-off",
+        can_iface_.c_str(), tx_errors, rx_errors);
+    } else if (ctrl & (CAN_ERR_CRTL_TX_WARNING | CAN_ERR_CRTL_RX_WARNING)) {
+      RCLCPP_WARN_THROTTLE(
+        logger(), clock_, 1000,
+        "CAN controller on '%s' crossed the error-warning threshold (tx_err=%u rx_err=%u)",
+        can_iface_.c_str(), tx_errors, rx_errors);
+    }
+  }
+
+  if (error_class & CAN_ERR_PROT) {
+    std::ostringstream detail;
+    if (proto_type & CAN_ERR_PROT_BIT) { detail << "bit "; }
+    if (proto_type & CAN_ERR_PROT_FORM) { detail << "form "; }
+    if (proto_type & CAN_ERR_PROT_STUFF) { detail << "stuff "; }
+    if (proto_type & CAN_ERR_PROT_BIT0) { detail << "dominant-bit "; }
+    if (proto_type & CAN_ERR_PROT_BIT1) { detail << "recessive-bit "; }
+    if (proto_type & CAN_ERR_PROT_OVERLOAD) { detail << "overload "; }
+    if (detail.str().empty()) { detail << "unspecified "; }
+    RCLCPP_WARN_THROTTLE(
+      logger(), clock_, 1000, "CAN protocol error on '%s': %serror (location code 0x%02x)",
+      can_iface_.c_str(), detail.str().c_str(), proto_loc);
+  }
+
+  if (error_class & CAN_ERR_BUSERROR) {
+    RCLCPP_WARN_THROTTLE(
+      logger(), clock_, 1000, "CAN bus error on '%s' (line-level noise, short, or wiring fault)",
+      can_iface_.c_str());
+  }
+
+  if (error_class & CAN_ERR_ACK) {
+    RCLCPP_WARN_THROTTLE(
+      logger(), clock_, 1000,
+      "CAN ACK error on '%s' -- a transmitted frame went unacknowledged (bus disconnected, or "
+      "every other node missed it)",
+      can_iface_.c_str());
+  }
+
+  if (error_class & CAN_ERR_LOSTARB) {
+    RCLCPP_WARN_THROTTLE(
+      logger(), clock_, 1000, "CAN arbitration lost on '%s'", can_iface_.c_str());
   }
 }
 

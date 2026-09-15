@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include <linux/can.h>
+
 #include "hardware_interface/system_interface.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/macros.hpp"
@@ -133,6 +135,10 @@ private:
 
   void handleActuatorStatus(CanardRxTransfer * transfer);
   void handleEscStatus(CanardRxTransfer * transfer);
+  // Decodes and logs a SocketCAN error-class frame (CAN_ERR_FLAG set in can_id) -- see
+  // on_activate()'s CAN_RAW_ERR_FILTER setsockopt for why these start arriving at all.
+  // Diagnostic only: does not itself recover the bus.
+  void handleErrorFrame(const struct can_frame & frame);
   void pumpTxQueue();
   void pumpRx();
   void broadcastRpmCommand(bool force_stop);
